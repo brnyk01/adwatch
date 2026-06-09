@@ -6,6 +6,7 @@ Requires the FastAPI server to be running on API_BASE (default http://127.0.0.1:
 
 import json
 import os
+import re
 
 import requests
 import streamlit as st
@@ -21,13 +22,6 @@ STATUS_COLOUR = {
     "no_data":          "🟡",
     "no_official_api":  "⚫",
     "error":            "🔴",
-}
-
-STATUS_LABEL = {
-    "ok":               "Official data retrieved",
-    "no_data":          "No data returned (expected for non-EU)",
-    "no_official_api":  "No official API — open UI link",
-    "error":            "Error (check credentials)",
 }
 
 CONNECTOR_DISPLAY = {
@@ -51,11 +45,48 @@ def api(method: str, path: str, **kwargs):
         r.raise_for_status()
         return r.json()
     except requests.exceptions.ConnectionError:
-        st.error("⚠️ Cannot reach the AdWatch API. Make sure `uvicorn adwatch.api:app` is running.")
+        st.error("⚠️ Cannot reach the AdWatch API. Make sure the API service is running.")
         st.stop()
     except requests.exceptions.HTTPError as e:
         st.error(f"API error {e.response.status_code}: {e.response.text[:300]}")
         return None
+
+
+def domain_to_brand(domain: str) -> str:
+    """ikea.com.sg → Ikea,  rival-agency.sg → Rival Agency"""
+    host = domain.lower().lstrip("www.").split(".")[0]
+    return re.sub(r"[-_]", " ", host).title()
+
+
+def brand_to_domain(brand: str) -> str:
+    """IKEA → ikea.com,  Rival Agency → rival-agency.com"""
+    slug = re.sub(r"\s+", "-", brand.strip().lower())
+    return f"{slug}.com"
+
+
+def autofill_ids(domain: str | None, name: str | None) -> dict:
+    """Call both resolve endpoints, return {meta_page_id, google_advertiser_id}."""
+    result = {"meta_page_id": None, "google_advertiser_id": None, "messages": []}
+
+    params = {}
+    if domain:
+        params["domain"] = domain
+    elif name:
+        params["name"] = name
+    else:
+        return result
+
+    meta = api("GET", "/resolve/meta", params=params)
+    if meta:
+        result["meta_page_id"] = meta.get("platform_id")
+        result["messages"].append(f"Meta: {meta.get('message','')}")
+
+    goog = api("GET", "/resolve/google", params=params)
+    if goog:
+        result["google_advertiser_id"] = goog.get("platform_id")
+        result["messages"].append(f"Google: {goog.get('message','')}")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +105,6 @@ st.markdown("""
     .block-container { padding-top: 1.5rem; }
     .stButton > button { border-radius: 8px; }
     div[data-testid="metric-container"] { background: #f8f9fb; border-radius: 10px; padding: 0.5rem 1rem; }
-    .coverage-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -100,27 +130,86 @@ if page == "Clients":
     st.title("Clients")
     st.caption("Brands you manage. Ads are fetched by landing domain or Meta page ID.")
 
+    # ── Session state keys for the add-client form ──
+    for k, v in [
+        ("nc_name", ""), ("nc_domain", ""),
+        ("nc_page_id", ""), ("nc_goog_id", ""), ("nc_notes", ""),
+    ]:
+        if k not in st.session_state:
+            st.session_state[k] = v
+
     with st.expander("➕ Add client", expanded=False):
-        with st.form("add_client"):
-            name         = st.text_input("Brand name *")
-            domain       = st.text_input("Landing domain *", placeholder="example.com")
-            page_id      = st.text_input("Meta page ID (optional)", placeholder="123456789")
-            goog_id      = st.text_input("Google advertiser ID (optional)")
-            notes        = st.text_area("Notes", height=80)
-            submitted    = st.form_submit_button("Add client")
-        if submitted:
-            if not name or not domain:
+
+        # Brand ↔ domain autofill buttons (outside form so they can mutate session state)
+        acol1, acol2, acol3 = st.columns([3, 3, 2])
+        with acol1:
+            st.session_state["nc_name"] = st.text_input(
+                "Brand name *",
+                value=st.session_state["nc_name"],
+                key="_nc_name_input",
+                placeholder="e.g. Ikea",
+            )
+        with acol2:
+            st.session_state["nc_domain"] = st.text_input(
+                "Landing domain *",
+                value=st.session_state["nc_domain"],
+                key="_nc_domain_input",
+                placeholder="e.g. ikea.com.sg",
+            )
+        with acol3:
+            st.write("")
+            st.write("")
+            bcol1, bcol2 = st.columns(2)
+            if bcol1.button("Name → URL", key="nc_name2url", help="Suggest domain from brand name"):
+                if st.session_state["nc_name"]:
+                    st.session_state["nc_domain"] = brand_to_domain(st.session_state["nc_name"])
+                    st.rerun()
+            if bcol2.button("URL → Name", key="nc_url2name", help="Suggest brand name from domain"):
+                if st.session_state["nc_domain"]:
+                    st.session_state["nc_name"] = domain_to_brand(st.session_state["nc_domain"])
+                    st.rerun()
+
+        st.session_state["nc_page_id"] = st.text_input(
+            "Meta page ID", value=st.session_state["nc_page_id"], placeholder="auto-filled or enter manually"
+        )
+        st.session_state["nc_goog_id"] = st.text_input(
+            "Google advertiser ID", value=st.session_state["nc_goog_id"], placeholder="auto-filled or enter manually"
+        )
+        st.session_state["nc_notes"] = st.text_area("Notes", value=st.session_state["nc_notes"], height=60)
+
+        btnA, btnB, btnC = st.columns([2, 2, 2])
+        if btnA.button("🔍 Auto-fill IDs", key="nc_autofill", use_container_width=True):
+            with st.spinner("Looking up Meta page ID and Google advertiser ID…"):
+                filled = autofill_ids(st.session_state["nc_domain"] or None, st.session_state["nc_name"] or None)
+            if filled["meta_page_id"]:
+                st.session_state["nc_page_id"] = filled["meta_page_id"]
+            if filled["google_advertiser_id"]:
+                st.session_state["nc_goog_id"] = filled["google_advertiser_id"]
+            for msg in filled["messages"]:
+                st.caption(msg)
+            st.rerun()
+
+        if btnB.button("✅ Add client", key="nc_submit", type="primary", use_container_width=True):
+            if not st.session_state["nc_name"] or not st.session_state["nc_domain"]:
                 st.error("Brand name and domain are required.")
             else:
                 result = api("POST", "/clients", json={
-                    "name": name, "landing_domain": domain,
-                    "meta_page_id": page_id or None,
-                    "google_advertiser_id": goog_id or None,
-                    "notes": notes or None,
+                    "name": st.session_state["nc_name"],
+                    "landing_domain": st.session_state["nc_domain"],
+                    "meta_page_id": st.session_state["nc_page_id"] or None,
+                    "google_advertiser_id": st.session_state["nc_goog_id"] or None,
+                    "notes": st.session_state["nc_notes"] or None,
                 })
                 if result:
-                    st.success(f"✅ Added client: {result['name']} (id {result['id']})")
+                    st.success(f"✅ Added: {result['name']}")
+                    for k in ["nc_name", "nc_domain", "nc_page_id", "nc_goog_id", "nc_notes"]:
+                        st.session_state[k] = ""
                     st.rerun()
+
+        if btnC.button("🔄 Clear", key="nc_clear", use_container_width=True):
+            for k in ["nc_name", "nc_domain", "nc_page_id", "nc_goog_id", "nc_notes"]:
+                st.session_state[k] = ""
+            st.rerun()
 
     clients = api("GET", "/clients") or []
     if not clients:
@@ -131,46 +220,47 @@ if page == "Clients":
                 col1, col2, col3 = st.columns([4, 3, 1])
                 col1.markdown(f"**{c['name']}**  \n`{c['landing_domain']}`")
                 col2.caption(
-                    ("Meta page: `" + c["meta_page_id"] + "`" if c.get("meta_page_id") else "⚠️ No Meta page ID") +
+                    ("Meta: `" + c["meta_page_id"] + "`" if c.get("meta_page_id") else "⚠️ No Meta page ID") +
                     ("   |   Google: `" + c["google_advertiser_id"] + "`" if c.get("google_advertiser_id") else "")
                 )
-                if col3.button("🗑", key=f"del_client_{c['id']}", help="Delete client"):
+                if col3.button("🗑", key=f"del_client_{c['id']}", help="Delete"):
                     api("DELETE", f"/clients/{c['id']}")
                     st.rerun()
 
-                # Inline ID editor
                 with st.expander("✏️ Edit platform IDs", expanded=not c.get("meta_page_id")):
                     ecol1, ecol2, ecol3 = st.columns([3, 3, 2])
                     new_page_id = ecol1.text_input(
-                        "Meta page ID",
-                        value=c.get("meta_page_id") or "",
-                        key=f"mpid_{c['id']}",
-                        placeholder="e.g. 123456789",
+                        "Meta page ID", value=c.get("meta_page_id") or "",
+                        key=f"mpid_{c['id']}", placeholder="e.g. 123456789",
                     )
                     new_goog_id = ecol2.text_input(
-                        "Google advertiser ID",
-                        value=c.get("google_advertiser_id") or "",
-                        key=f"ggid_c_{c['id']}",
-                        placeholder="e.g. AR12345678901234567",
+                        "Google advertiser ID", value=c.get("google_advertiser_id") or "",
+                        key=f"ggid_c_{c['id']}", placeholder="e.g. AR12345678901234567",
                     )
                     bcol1, bcol2 = ecol3.columns(2)
-                    if bcol1.button("💾", key=f"save_cids_{c['id']}", help="Save IDs"):
-                        result = api("PATCH", f"/clients/{c['id']}/ids", json={
+                    if bcol1.button("💾 Save", key=f"save_cids_{c['id']}"):
+                        r = api("PATCH", f"/clients/{c['id']}/ids", json={
                             "meta_page_id": new_page_id or None,
                             "google_advertiser_id": new_goog_id or None,
                         })
-                        if result:
+                        if r:
                             st.success("Saved.")
                             st.rerun()
-                    if bcol2.button("🔍", key=f"lookup_c_{c['id']}", help="Lookup Meta page ID from domain"):
-                        with st.spinner("Looking up Meta page ID…"):
-                            r = api("GET", "/resolve/meta", params={"domain": c["landing_domain"]})
-                        if r and r.get("page_id"):
-                            api("PATCH", f"/clients/{c['id']}/ids", json={"meta_page_id": r["page_id"]})
-                            st.success(f"Found & saved: {r['page_id']}")
+                    if bcol2.button("🔍 Auto-fill", key=f"lookup_c_{c['id']}"):
+                        with st.spinner("Looking up…"):
+                            filled = autofill_ids(c["landing_domain"], c["name"])
+                        patch = {}
+                        if filled["meta_page_id"]:
+                            patch["meta_page_id"] = filled["meta_page_id"]
+                        if filled["google_advertiser_id"]:
+                            patch["google_advertiser_id"] = filled["google_advertiser_id"]
+                        if patch:
+                            api("PATCH", f"/clients/{c['id']}/ids", json=patch)
+                            st.success(f"Auto-filled: {patch}")
                             st.rerun()
                         else:
-                            st.warning(r.get("message", "Not found — enter manually."))
+                            for msg in filled["messages"]:
+                                st.warning(msg)
 
 # ---------------------------------------------------------------------------
 # PAGE: Competitors
@@ -180,30 +270,90 @@ elif page == "Competitors":
     st.title("Competitors")
     st.caption("Agencies and brands to monitor. Queried by registration name or brand domain.")
 
+    for k, v in [
+        ("nc_disp", ""), ("nc_reg", ""), ("nc_type", "brand"),
+        ("nc_bdomain", ""), ("nc_cpid", ""), ("nc_cgid", ""),
+    ]:
+        if k not in st.session_state:
+            st.session_state[k] = v
+
     with st.expander("➕ Add competitor", expanded=False):
-        with st.form("add_competitor"):
-            display_name = st.text_input("Display name *", placeholder="Rival Agency")
-            reg_name     = st.text_input("Registration / advertiser name *", placeholder="Rival Pte Ltd")
-            ctype        = st.selectbox("Type", ["agency", "brand"])
-            brand_domain = st.text_input("Brand domain (optional)", placeholder="rival.sg")
-            page_id      = st.text_input("Meta page ID (optional)")
-            goog_id      = st.text_input("Google advertiser ID (optional)")
-            submitted    = st.form_submit_button("Add competitor")
-        if submitted:
-            if not display_name or not reg_name:
+
+        ccol1, ccol2, ccol3 = st.columns([3, 3, 2])
+        with ccol1:
+            st.session_state["nc_disp"] = st.text_input(
+                "Display name *", value=st.session_state["nc_disp"], placeholder="Rival Agency"
+            )
+        with ccol2:
+            st.session_state["nc_bdomain"] = st.text_input(
+                "Brand domain", value=st.session_state["nc_bdomain"], placeholder="rival.sg"
+            )
+        with ccol3:
+            st.write("")
+            st.write("")
+            bc1, bc2 = st.columns(2)
+            if bc1.button("Name → URL", key="cc_name2url"):
+                if st.session_state["nc_disp"]:
+                    st.session_state["nc_bdomain"] = brand_to_domain(st.session_state["nc_disp"])
+                    st.rerun()
+            if bc2.button("URL → Name", key="cc_url2name"):
+                if st.session_state["nc_bdomain"]:
+                    st.session_state["nc_disp"] = domain_to_brand(st.session_state["nc_bdomain"])
+                    st.rerun()
+
+        st.session_state["nc_reg"] = st.text_input(
+            "Registration / advertiser name *",
+            value=st.session_state["nc_reg"],
+            placeholder="Rival Pte Ltd",
+        )
+        st.session_state["nc_type"] = st.selectbox(
+            "Type", ["brand", "agency"],
+            index=0 if st.session_state["nc_type"] == "brand" else 1,
+        )
+        st.session_state["nc_cpid"] = st.text_input(
+            "Meta page ID", value=st.session_state["nc_cpid"], placeholder="auto-filled or enter manually"
+        )
+        st.session_state["nc_cgid"] = st.text_input(
+            "Google advertiser ID", value=st.session_state["nc_cgid"], placeholder="auto-filled or enter manually"
+        )
+
+        cb1, cb2, cb3 = st.columns([2, 2, 2])
+        if cb1.button("🔍 Auto-fill IDs", key="cc_autofill", use_container_width=True):
+            with st.spinner("Looking up…"):
+                filled = autofill_ids(
+                    st.session_state["nc_bdomain"] or None,
+                    st.session_state["nc_disp"] or None,
+                )
+            if filled["meta_page_id"]:
+                st.session_state["nc_cpid"] = filled["meta_page_id"]
+            if filled["google_advertiser_id"]:
+                st.session_state["nc_cgid"] = filled["google_advertiser_id"]
+            for msg in filled["messages"]:
+                st.caption(msg)
+            st.rerun()
+
+        if cb2.button("✅ Add competitor", key="cc_submit", type="primary", use_container_width=True):
+            if not st.session_state["nc_disp"] or not st.session_state["nc_reg"]:
                 st.error("Display name and registration name are required.")
             else:
                 result = api("POST", "/competitors", json={
-                    "display_name": display_name,
-                    "registration_name": reg_name,
-                    "type": ctype,
-                    "brand_domain": brand_domain or None,
-                    "meta_page_id": page_id or None,
-                    "google_advertiser_id": goog_id or None,
+                    "display_name": st.session_state["nc_disp"],
+                    "registration_name": st.session_state["nc_reg"],
+                    "type": st.session_state["nc_type"],
+                    "brand_domain": st.session_state["nc_bdomain"] or None,
+                    "meta_page_id": st.session_state["nc_cpid"] or None,
+                    "google_advertiser_id": st.session_state["nc_cgid"] or None,
                 })
                 if result:
-                    st.success(f"✅ Added competitor: {result['display_name']} (id {result['id']})")
+                    st.success(f"✅ Added: {result['display_name']}")
+                    for k in ["nc_disp", "nc_reg", "nc_bdomain", "nc_cpid", "nc_cgid"]:
+                        st.session_state[k] = ""
                     st.rerun()
+
+        if cb3.button("🔄 Clear", key="cc_clear", use_container_width=True):
+            for k in ["nc_disp", "nc_reg", "nc_bdomain", "nc_cpid", "nc_cgid"]:
+                st.session_state[k] = ""
+            st.rerun()
 
     competitors = api("GET", "/competitors") or []
     if not competitors:
@@ -214,46 +364,49 @@ elif page == "Competitors":
                 col1, col2, col3 = st.columns([4, 3, 1])
                 col1.markdown(f"**{c['display_name']}**  \n`{c['registration_name']}` · {c['type']}")
                 col2.caption(
-                    (c.get("brand_domain") or "No domain set") +
-                    ("  |  Meta: `" + c["meta_page_id"] + "`" if c.get("meta_page_id") else "  |  ⚠️ No Meta page ID")
+                    (c.get("brand_domain") or "No domain") +
+                    ("  |  Meta: `" + c["meta_page_id"] + "`" if c.get("meta_page_id") else "  |  ⚠️ No Meta ID")
                 )
-                if col3.button("🗑", key=f"del_comp_{c['id']}", help="Delete competitor"):
+                if col3.button("🗑", key=f"del_comp_{c['id']}", help="Delete"):
                     api("DELETE", f"/competitors/{c['id']}")
                     st.rerun()
 
                 with st.expander("✏️ Edit platform IDs", expanded=not c.get("meta_page_id")):
                     ecol1, ecol2, ecol3 = st.columns([3, 3, 2])
                     new_page_id = ecol1.text_input(
-                        "Meta page ID",
-                        value=c.get("meta_page_id") or "",
-                        key=f"mpid_comp_{c['id']}",
-                        placeholder="e.g. 123456789",
+                        "Meta page ID", value=c.get("meta_page_id") or "",
+                        key=f"mpid_comp_{c['id']}", placeholder="e.g. 123456789",
                     )
                     new_goog_id = ecol2.text_input(
-                        "Google advertiser ID",
-                        value=c.get("google_advertiser_id") or "",
+                        "Google advertiser ID", value=c.get("google_advertiser_id") or "",
                         key=f"ggid_comp_{c['id']}",
                     )
                     bcol1, bcol2 = ecol3.columns(2)
-                    if bcol1.button("💾", key=f"save_compids_{c['id']}", help="Save IDs"):
-                        result = api("PATCH", f"/competitors/{c['id']}/ids", json={
+                    if bcol1.button("💾 Save", key=f"save_compids_{c['id']}"):
+                        r = api("PATCH", f"/competitors/{c['id']}/ids", json={
                             "meta_page_id": new_page_id or None,
                             "google_advertiser_id": new_goog_id or None,
                         })
-                        if result:
+                        if r:
                             st.success("Saved.")
                             st.rerun()
-                    lookup_domain = c.get("brand_domain") or c.get("registration_name")
-                    if bcol2.button("🔍", key=f"lookup_comp_{c['id']}", help="Lookup Meta page ID"):
+                    lookup_domain = c.get("brand_domain")
+                    lookup_name = c.get("display_name")
+                    if bcol2.button("🔍 Auto-fill", key=f"lookup_comp_{c['id']}"):
                         with st.spinner("Looking up…"):
-                            param = "domain" if c.get("brand_domain") else "name"
-                            r = api("GET", "/resolve/meta", params={param: lookup_domain})
-                        if r and r.get("page_id"):
-                            api("PATCH", f"/competitors/{c['id']}/ids", json={"meta_page_id": r["page_id"]})
-                            st.success(f"Found & saved: {r['page_id']}")
+                            filled = autofill_ids(lookup_domain, lookup_name)
+                        patch = {}
+                        if filled["meta_page_id"]:
+                            patch["meta_page_id"] = filled["meta_page_id"]
+                        if filled["google_advertiser_id"]:
+                            patch["google_advertiser_id"] = filled["google_advertiser_id"]
+                        if patch:
+                            api("PATCH", f"/competitors/{c['id']}/ids", json=patch)
+                            st.success(f"Auto-filled: {patch}")
                             st.rerun()
                         else:
-                            st.warning(r.get("message", "Not found — enter manually."))
+                            for msg in filled["messages"]:
+                                st.warning(msg)
 
 # ---------------------------------------------------------------------------
 # PAGE: Run History
@@ -270,24 +423,25 @@ elif page == "Run History":
     params: dict = {"limit": 100}
     if filter_connector != "(all)":
         params["connector"] = filter_connector
-    if filter_status != "(all)":
-        params["status"] = filter_status
 
     runs = api("GET", "/runs", params=params) or []
+    if filter_status != "(all)":
+        runs = [r for r in runs if r["status"] == filter_status]
+
     if not runs:
         st.info("No runs yet. Trigger a refresh from the Dashboard.")
     else:
         rows = []
         for r in runs:
             rows.append({
-                "When":        r["ran_at"][:19].replace("T", " "),
-                "Connector":   CONNECTOR_DISPLAY.get(r["connector"], r["connector"]),
-                "Subject":     f"{r['subject_type']} #{r['subject_id']}",
-                "Dimension":   r["query_dimension"],
-                "Value":       r["query_value"],
-                "Status":      STATUS_COLOUR.get(r["status"], "❓") + " " + r["status"],
-                "Count":       r["result_count"],
-                "Message":     r["message"][:120],
+                "When":      r["ran_at"][:19].replace("T", " "),
+                "Connector": CONNECTOR_DISPLAY.get(r["connector"], r["connector"]),
+                "Subject":   f"{r['subject_type']} #{r['subject_id']}",
+                "Dimension": r["query_dimension"],
+                "Value":     r["query_value"],
+                "Status":    STATUS_COLOUR.get(r["status"], "❓") + " " + r["status"],
+                "Count":     r["result_count"],
+                "Message":   r["message"][:120],
             })
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
@@ -301,7 +455,6 @@ else:
     clients     = api("GET", "/clients") or []
     competitors = api("GET", "/competitors") or []
 
-    # ── Metrics row ──────────────────────────────────────────────────────────
     m1, m2, m3 = st.columns(3)
     m1.metric("Clients", len(clients))
     m2.metric("Competitors", len(competitors))
@@ -320,18 +473,22 @@ else:
             [f"Client: {c['name']} (#{c['id']})" for c in clients] + \
             [f"Competitor: {c['display_name']} (#{c['id']})" for c in competitors]
         subject_sel = rcol1.selectbox("Subject", subject_opts)
-
         country = rcol2.text_input("Country", value="SG").upper()
-        date_min = rcol3.text_input("From date (YYYY-MM-DD)", value="")
-        date_max = rcol4.text_input("To date (YYYY-MM-DD)", value="")
-
+        date_min = rcol3.text_input(
+            "From date", value="",
+            placeholder="YYYY-MM-DD — leave blank for all time",
+        )
+        date_max = rcol4.text_input(
+            "To date", value="",
+            placeholder="YYYY-MM-DD — leave blank for all time",
+        )
         run_refresh = st.form_submit_button("▶ Refresh now", type="primary", use_container_width=True)
 
     if run_refresh:
         payload: dict = {
             "country": country,
-            "date_min": date_min or None,
-            "date_max": date_max or None,
+            "date_min": date_min.strip() or None,
+            "date_max": date_max.strip() or None,
         }
         if subject_sel != "All":
             kind, rest = subject_sel.split(": ", 1)
@@ -344,8 +501,7 @@ else:
 
         if data:
             st.success("Refresh complete.")
-            # Flatten results for display
-            if "results" in data and isinstance(data["results"], list):
+            if isinstance(data.get("results"), list):
                 all_results = data["results"]
             else:
                 all_results = []
@@ -354,10 +510,10 @@ else:
 
             st.markdown("**Coverage summary**")
             for r in all_results:
-                icon = STATUS_COLOUR.get(r["status"], "❓")
+                icon  = STATUS_COLOUR.get(r["status"], "❓")
                 label = CONNECTOR_DISPLAY.get(r["connector"], r["connector"])
                 manual = r.get("manual_url")
-                link = f" [→ open UI]({manual})" if manual else ""
+                link  = f" [→ open UI]({manual})" if manual else ""
                 st.markdown(f"{icon} **{label}** — {r['message'][:100]}{link}")
 
     st.divider()

@@ -296,9 +296,12 @@ def list_runs(
 # Resolution helpers
 # ---------------------------------------------------------------------------
 
-class MetaResolveOut(BaseModel):
-    page_id: Optional[str]
+class ResolveOut(BaseModel):
+    platform_id: Optional[str]
     message: str
+
+# keep old name as alias for backwards compat
+MetaResolveOut = ResolveOut
 
 
 @app.get("/resolve/meta", response_model=MetaResolveOut)
@@ -325,8 +328,56 @@ def resolve_meta_page_id(
     page_id = connector._resolve_domain_to_page_id(search_value)
 
     if page_id:
-        return MetaResolveOut(page_id=page_id, message=f"Found page_id {page_id} for '{search_value}'")
-    return MetaResolveOut(page_id=None, message=f"No page_id found for '{search_value}' — enter it manually")
+        return ResolveOut(platform_id=page_id, message=f"Found page_id {page_id} for '{search_value}'")
+    return ResolveOut(platform_id=None, message=f"No page_id found for '{search_value}' — enter it manually")
+
+
+@app.get("/resolve/google", response_model=ResolveOut)
+def resolve_google_advertiser_id(
+    domain: Optional[str] = FQuery(default=None),
+    name: Optional[str] = FQuery(default=None),
+):
+    """
+    Best-effort resolution of a brand domain or name → Google advertiser_id
+    via the BigQuery public dataset (EEA ads). Returns null if credentials not set.
+    """
+    if not domain and not name:
+        raise HTTPException(status_code=422, detail="Provide ?domain= or ?name=")
+
+    from adwatch.config import settings
+    import os
+
+    creds = settings.google_application_credentials
+    adc = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+    if not creds and not os.path.exists(adc):
+        return ResolveOut(platform_id=None, message="Google credentials not configured")
+
+    try:
+        from google.cloud import bigquery as bq
+
+        if creds and os.path.exists(creds):
+            client = bq.Client.from_service_account_json(creds)
+        else:
+            client = bq.Client()
+
+        pattern = f"%{(domain or name).lower()}%"
+        field = "advertiser_url" if domain else "advertiser_name"
+        sql = f"""
+            SELECT advertiser_id, advertiser_name, advertiser_url
+            FROM `bigquery-public-data.google_ads_transparency_center.creative_stats`
+            WHERE LOWER({field}) LIKE @pattern
+            LIMIT 1
+        """
+        job = client.query(sql, job_config=bq.QueryJobConfig(
+            query_parameters=[bq.ScalarQueryParameter("pattern", "STRING", pattern)]
+        ))
+        rows = list(job.result())
+        if rows:
+            aid = str(rows[0].advertiser_id)
+            return ResolveOut(platform_id=aid, message=f"Found advertiser_id {aid} for '{domain or name}'")
+        return ResolveOut(platform_id=None, message=f"No Google advertiser_id found for '{domain or name}'")
+    except Exception as exc:
+        return ResolveOut(platform_id=None, message=f"BigQuery lookup failed: {str(exc)[:120]}")
 
 
 class PatchIdsIn(BaseModel):
