@@ -134,11 +134,12 @@ if page == "Clients":
     for k, v in [
         ("nc_name", ""), ("nc_domain", ""),
         ("nc_page_id", ""), ("nc_goog_id", ""), ("nc_notes", ""),
+        ("nc_expander_open", False),
     ]:
         if k not in st.session_state:
             st.session_state[k] = v
 
-    with st.expander("➕ Add client", expanded=False):
+    with st.expander("➕ Add client", expanded=st.session_state["nc_expander_open"]):
 
         acol1, acol2, acol3 = st.columns([3, 3, 2])
         # Use key= matching session_state slot; no value= so Streamlit owns the state
@@ -151,10 +152,12 @@ if page == "Clients":
             if bc1.button("Name→URL", key="nc_name2url", help="Suggest domain from brand name"):
                 if st.session_state["nc_name"]:
                     st.session_state["nc_domain"] = brand_to_domain(st.session_state["nc_name"])
+                    st.session_state["nc_expander_open"] = True
                     st.rerun()
             if bc2.button("URL→Name", key="nc_url2name", help="Suggest brand name from domain"):
                 if st.session_state["nc_domain"]:
                     st.session_state["nc_name"] = domain_to_brand(st.session_state["nc_domain"])
+                    st.session_state["nc_expander_open"] = True
                     st.rerun()
 
         st.text_input("Meta page ID", key="nc_page_id", placeholder="auto-filled or enter manually")
@@ -174,6 +177,7 @@ if page == "Clients":
                 st.session_state["nc_goog_id"] = filled["google_advertiser_id"]
             for msg in filled["messages"]:
                 st.caption(msg)
+            st.session_state["nc_expander_open"] = True
             st.rerun()
 
         if btnB.button("✅ Add client", key="nc_submit", type="primary", use_container_width=True):
@@ -191,11 +195,13 @@ if page == "Clients":
                     st.success(f"✅ Added: {result['name']}")
                     for k in ["nc_name", "nc_domain", "nc_page_id", "nc_goog_id", "nc_notes"]:
                         st.session_state[k] = ""
+                    st.session_state["nc_expander_open"] = False
                     st.rerun()
 
         if btnC.button("🔄 Clear", key="nc_clear", use_container_width=True):
             for k in ["nc_name", "nc_domain", "nc_page_id", "nc_goog_id", "nc_notes"]:
                 st.session_state[k] = ""
+            st.session_state["nc_expander_open"] = True
             st.rerun()
 
     clients = api("GET", "/clients") or []
@@ -260,11 +266,12 @@ elif page == "Competitors":
     for k, v in [
         ("nc_disp", ""), ("nc_reg", ""), ("nc_type", "brand"),
         ("nc_bdomain", ""), ("nc_cpid", ""), ("nc_cgid", ""),
+        ("cc_expander_open", False),
     ]:
         if k not in st.session_state:
             st.session_state[k] = v
 
-    with st.expander("➕ Add competitor", expanded=False):
+    with st.expander("➕ Add competitor", expanded=st.session_state["cc_expander_open"]):
 
         ccol1, ccol2, ccol3 = st.columns([3, 3, 2])
         ccol1.text_input("Display name *", key="nc_disp", placeholder="Rival Agency")
@@ -276,10 +283,12 @@ elif page == "Competitors":
             if bc1.button("Name→URL", key="cc_name2url"):
                 if st.session_state["nc_disp"]:
                     st.session_state["nc_bdomain"] = brand_to_domain(st.session_state["nc_disp"])
+                    st.session_state["cc_expander_open"] = True
                     st.rerun()
             if bc2.button("URL→Name", key="cc_url2name"):
                 if st.session_state["nc_bdomain"]:
                     st.session_state["nc_disp"] = domain_to_brand(st.session_state["nc_bdomain"])
+                    st.session_state["cc_expander_open"] = True
                     st.rerun()
 
         st.text_input("Registration / advertiser name *", key="nc_reg", placeholder="Rival Pte Ltd")
@@ -300,6 +309,7 @@ elif page == "Competitors":
                 st.session_state["nc_cgid"] = filled["google_advertiser_id"]
             for msg in filled["messages"]:
                 st.caption(msg)
+            st.session_state["cc_expander_open"] = True
             st.rerun()
 
         if cb2.button("✅ Add competitor", key="cc_submit", type="primary", use_container_width=True):
@@ -318,11 +328,13 @@ elif page == "Competitors":
                     st.success(f"✅ Added: {result['display_name']}")
                     for k in ["nc_disp", "nc_reg", "nc_bdomain", "nc_cpid", "nc_cgid"]:
                         st.session_state[k] = ""
+                    st.session_state["cc_expander_open"] = False
                     st.rerun()
 
         if cb3.button("🔄 Clear", key="cc_clear", use_container_width=True):
             for k in ["nc_disp", "nc_reg", "nc_bdomain", "nc_cpid", "nc_cgid"]:
                 st.session_state[k] = ""
+            st.session_state["cc_expander_open"] = True
             st.rerun()
 
     competitors = api("GET", "/competitors") or []
