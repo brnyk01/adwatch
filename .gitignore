@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+adwatch.db
+*.db
+.DS_Store
+service-account*.json
