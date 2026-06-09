@@ -140,47 +140,34 @@ if page == "Clients":
 
     with st.expander("➕ Add client", expanded=False):
 
-        # Brand ↔ domain autofill buttons (outside form so they can mutate session state)
         acol1, acol2, acol3 = st.columns([3, 3, 2])
-        with acol1:
-            st.session_state["nc_name"] = st.text_input(
-                "Brand name *",
-                value=st.session_state["nc_name"],
-                key="_nc_name_input",
-                placeholder="e.g. Ikea",
-            )
-        with acol2:
-            st.session_state["nc_domain"] = st.text_input(
-                "Landing domain *",
-                value=st.session_state["nc_domain"],
-                key="_nc_domain_input",
-                placeholder="e.g. ikea.com.sg",
-            )
+        # Use key= matching session_state slot; no value= so Streamlit owns the state
+        acol1.text_input("Brand name *", key="nc_name", placeholder="e.g. Ikea")
+        acol2.text_input("Landing domain *", key="nc_domain", placeholder="e.g. ikea.com.sg")
         with acol3:
             st.write("")
             st.write("")
-            bcol1, bcol2 = st.columns(2)
-            if bcol1.button("Name → URL", key="nc_name2url", help="Suggest domain from brand name"):
+            bc1, bc2 = st.columns(2)
+            if bc1.button("Name→URL", key="nc_name2url", help="Suggest domain from brand name"):
                 if st.session_state["nc_name"]:
                     st.session_state["nc_domain"] = brand_to_domain(st.session_state["nc_name"])
                     st.rerun()
-            if bcol2.button("URL → Name", key="nc_url2name", help="Suggest brand name from domain"):
+            if bc2.button("URL→Name", key="nc_url2name", help="Suggest brand name from domain"):
                 if st.session_state["nc_domain"]:
                     st.session_state["nc_name"] = domain_to_brand(st.session_state["nc_domain"])
                     st.rerun()
 
-        st.session_state["nc_page_id"] = st.text_input(
-            "Meta page ID", value=st.session_state["nc_page_id"], placeholder="auto-filled or enter manually"
-        )
-        st.session_state["nc_goog_id"] = st.text_input(
-            "Google advertiser ID", value=st.session_state["nc_goog_id"], placeholder="auto-filled or enter manually"
-        )
-        st.session_state["nc_notes"] = st.text_area("Notes", value=st.session_state["nc_notes"], height=60)
+        st.text_input("Meta page ID", key="nc_page_id", placeholder="auto-filled or enter manually")
+        st.text_input("Google advertiser ID", key="nc_goog_id", placeholder="auto-filled or enter manually")
+        st.text_area("Notes", key="nc_notes", height=60)
 
         btnA, btnB, btnC = st.columns([2, 2, 2])
         if btnA.button("🔍 Auto-fill IDs", key="nc_autofill", use_container_width=True):
-            with st.spinner("Looking up Meta page ID and Google advertiser ID…"):
-                filled = autofill_ids(st.session_state["nc_domain"] or None, st.session_state["nc_name"] or None)
+            with st.spinner("Looking up IDs…"):
+                filled = autofill_ids(
+                    st.session_state["nc_domain"] or None,
+                    st.session_state["nc_name"] or None,
+                )
             if filled["meta_page_id"]:
                 st.session_state["nc_page_id"] = filled["meta_page_id"]
             if filled["google_advertiser_id"]:
@@ -280,42 +267,25 @@ elif page == "Competitors":
     with st.expander("➕ Add competitor", expanded=False):
 
         ccol1, ccol2, ccol3 = st.columns([3, 3, 2])
-        with ccol1:
-            st.session_state["nc_disp"] = st.text_input(
-                "Display name *", value=st.session_state["nc_disp"], placeholder="Rival Agency"
-            )
-        with ccol2:
-            st.session_state["nc_bdomain"] = st.text_input(
-                "Brand domain", value=st.session_state["nc_bdomain"], placeholder="rival.sg"
-            )
+        ccol1.text_input("Display name *", key="nc_disp", placeholder="Rival Agency")
+        ccol2.text_input("Brand domain", key="nc_bdomain", placeholder="rival.sg")
         with ccol3:
             st.write("")
             st.write("")
             bc1, bc2 = st.columns(2)
-            if bc1.button("Name → URL", key="cc_name2url"):
+            if bc1.button("Name→URL", key="cc_name2url"):
                 if st.session_state["nc_disp"]:
                     st.session_state["nc_bdomain"] = brand_to_domain(st.session_state["nc_disp"])
                     st.rerun()
-            if bc2.button("URL → Name", key="cc_url2name"):
+            if bc2.button("URL→Name", key="cc_url2name"):
                 if st.session_state["nc_bdomain"]:
                     st.session_state["nc_disp"] = domain_to_brand(st.session_state["nc_bdomain"])
                     st.rerun()
 
-        st.session_state["nc_reg"] = st.text_input(
-            "Registration / advertiser name *",
-            value=st.session_state["nc_reg"],
-            placeholder="Rival Pte Ltd",
-        )
-        st.session_state["nc_type"] = st.selectbox(
-            "Type", ["brand", "agency"],
-            index=0 if st.session_state["nc_type"] == "brand" else 1,
-        )
-        st.session_state["nc_cpid"] = st.text_input(
-            "Meta page ID", value=st.session_state["nc_cpid"], placeholder="auto-filled or enter manually"
-        )
-        st.session_state["nc_cgid"] = st.text_input(
-            "Google advertiser ID", value=st.session_state["nc_cgid"], placeholder="auto-filled or enter manually"
-        )
+        st.text_input("Registration / advertiser name *", key="nc_reg", placeholder="Rival Pte Ltd")
+        st.selectbox("Type", ["brand", "agency"], key="nc_type")
+        st.text_input("Meta page ID", key="nc_cpid", placeholder="auto-filled or enter manually")
+        st.text_input("Google advertiser ID", key="nc_cgid", placeholder="auto-filled or enter manually")
 
         cb1, cb2, cb3 = st.columns([2, 2, 2])
         if cb1.button("🔍 Auto-fill IDs", key="cc_autofill", use_container_width=True):
