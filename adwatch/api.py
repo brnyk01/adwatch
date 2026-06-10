@@ -304,7 +304,7 @@ class ResolveOut(BaseModel):
 MetaResolveOut = ResolveOut
 
 
-@app.get("/resolve/meta", response_model=MetaResolveOut)
+@app.get("/resolve/meta", response_model=ResolveOut)
 def resolve_meta_page_id(
     domain: Optional[str] = FQuery(default=None),
     name: Optional[str] = FQuery(default=None),
@@ -317,19 +317,22 @@ def resolve_meta_page_id(
     if not domain and not name:
         raise HTTPException(status_code=422, detail="Provide ?domain= or ?name=")
 
-    from adwatch.connectors.meta import MetaConnector
-    from adwatch.config import settings
+    try:
+        from adwatch.connectors.meta import MetaConnector
+        from adwatch.config import settings
 
-    if not settings.meta_access_token:
-        return MetaResolveOut(page_id=None, message="META_ACCESS_TOKEN not configured")
+        if not settings.meta_access_token:
+            return ResolveOut(platform_id=None, message="Meta: META_ACCESS_TOKEN not configured")
 
-    connector = MetaConnector()
-    search_value = domain or name
-    page_id = connector._resolve_domain_to_page_id(search_value)
+        connector = MetaConnector()
+        search_value = domain or name
+        page_id = connector._resolve_domain_to_page_id(search_value)
 
-    if page_id:
-        return ResolveOut(platform_id=page_id, message=f"Found page_id {page_id} for '{search_value}'")
-    return ResolveOut(platform_id=None, message=f"No page_id found for '{search_value}' — enter it manually")
+        if page_id:
+            return ResolveOut(platform_id=page_id, message=f"Meta: found page_id {page_id} for '{search_value}'")
+        return ResolveOut(platform_id=None, message=f"Meta: no page_id found for '{search_value}' — enter manually")
+    except Exception as exc:
+        return ResolveOut(platform_id=None, message=f"Meta: lookup failed — {str(exc)[:120]}")
 
 
 @app.get("/resolve/google", response_model=ResolveOut)
@@ -353,7 +356,7 @@ def resolve_google_advertiser_id(
         return ResolveOut(platform_id=None, message="Google credentials not configured")
 
     try:
-        from google.cloud import bigquery as bq
+        from google.cloud import bigquery as bq  # noqa
 
         if creds and os.path.exists(creds):
             client = bq.Client.from_service_account_json(creds)
