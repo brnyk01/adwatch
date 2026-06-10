@@ -130,7 +130,7 @@ if page == "Clients":
     st.title("Clients")
     st.caption("Brands you manage. Ads are fetched by landing domain or Meta page ID.")
 
-    # ── Session state keys for the add-client form ──
+    # ── Session state — widget keys + pending staging keys ──
     for k, v in [
         ("nc_name", ""), ("nc_domain", ""),
         ("nc_page_id", ""), ("nc_goog_id", ""), ("nc_notes", ""),
@@ -139,10 +139,17 @@ if page == "Clients":
         if k not in st.session_state:
             st.session_state[k] = v
 
+    # Apply any pending values BEFORE widgets render (Streamlit rule)
+    for src, dst in [
+        ("_p_nc_name", "nc_name"), ("_p_nc_domain", "nc_domain"),
+        ("_p_nc_page_id", "nc_page_id"), ("_p_nc_goog_id", "nc_goog_id"),
+    ]:
+        if src in st.session_state:
+            st.session_state[dst] = st.session_state.pop(src)
+
     with st.expander("➕ Add client", expanded=st.session_state["nc_expander_open"]):
 
         acol1, acol2, acol3 = st.columns([3, 3, 2])
-        # Use key= matching session_state slot; no value= so Streamlit owns the state
         acol1.text_input("Brand name *", key="nc_name", placeholder="e.g. Ikea")
         acol2.text_input("Landing domain *", key="nc_domain", placeholder="e.g. ikea.com.sg")
         with acol3:
@@ -151,12 +158,12 @@ if page == "Clients":
             bc1, bc2 = st.columns(2)
             if bc1.button("Name→URL", key="nc_name2url", help="Suggest domain from brand name"):
                 if st.session_state["nc_name"]:
-                    st.session_state["nc_domain"] = brand_to_domain(st.session_state["nc_name"])
+                    st.session_state["_p_nc_domain"] = brand_to_domain(st.session_state["nc_name"])
                     st.session_state["nc_expander_open"] = True
                     st.rerun()
             if bc2.button("URL→Name", key="nc_url2name", help="Suggest brand name from domain"):
                 if st.session_state["nc_domain"]:
-                    st.session_state["nc_name"] = domain_to_brand(st.session_state["nc_domain"])
+                    st.session_state["_p_nc_name"] = domain_to_brand(st.session_state["nc_domain"])
                     st.session_state["nc_expander_open"] = True
                     st.rerun()
 
@@ -172,9 +179,9 @@ if page == "Clients":
                     st.session_state["nc_name"] or None,
                 )
             if filled["meta_page_id"]:
-                st.session_state["nc_page_id"] = filled["meta_page_id"]
+                st.session_state["_p_nc_page_id"] = filled["meta_page_id"]
             if filled["google_advertiser_id"]:
-                st.session_state["nc_goog_id"] = filled["google_advertiser_id"]
+                st.session_state["_p_nc_goog_id"] = filled["google_advertiser_id"]
             for msg in filled["messages"]:
                 st.caption(msg)
             st.session_state["nc_expander_open"] = True
@@ -271,6 +278,14 @@ elif page == "Competitors":
         if k not in st.session_state:
             st.session_state[k] = v
 
+    # Apply pending values BEFORE widgets render
+    for src, dst in [
+        ("_p_nc_disp", "nc_disp"), ("_p_nc_bdomain", "nc_bdomain"),
+        ("_p_nc_cpid", "nc_cpid"), ("_p_nc_cgid", "nc_cgid"),
+    ]:
+        if src in st.session_state:
+            st.session_state[dst] = st.session_state.pop(src)
+
     with st.expander("➕ Add competitor", expanded=st.session_state["cc_expander_open"]):
 
         ccol1, ccol2, ccol3 = st.columns([3, 3, 2])
@@ -282,12 +297,12 @@ elif page == "Competitors":
             bc1, bc2 = st.columns(2)
             if bc1.button("Name→URL", key="cc_name2url"):
                 if st.session_state["nc_disp"]:
-                    st.session_state["nc_bdomain"] = brand_to_domain(st.session_state["nc_disp"])
+                    st.session_state["_p_nc_bdomain"] = brand_to_domain(st.session_state["nc_disp"])
                     st.session_state["cc_expander_open"] = True
                     st.rerun()
             if bc2.button("URL→Name", key="cc_url2name"):
                 if st.session_state["nc_bdomain"]:
-                    st.session_state["nc_disp"] = domain_to_brand(st.session_state["nc_bdomain"])
+                    st.session_state["_p_nc_disp"] = domain_to_brand(st.session_state["nc_bdomain"])
                     st.session_state["cc_expander_open"] = True
                     st.rerun()
 
@@ -304,9 +319,9 @@ elif page == "Competitors":
                     st.session_state["nc_disp"] or None,
                 )
             if filled["meta_page_id"]:
-                st.session_state["nc_cpid"] = filled["meta_page_id"]
+                st.session_state["_p_nc_cpid"] = filled["meta_page_id"]
             if filled["google_advertiser_id"]:
-                st.session_state["nc_cgid"] = filled["google_advertiser_id"]
+                st.session_state["_p_nc_cgid"] = filled["google_advertiser_id"]
             for msg in filled["messages"]:
                 st.caption(msg)
             st.session_state["cc_expander_open"] = True
